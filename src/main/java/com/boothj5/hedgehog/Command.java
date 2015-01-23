@@ -1,16 +1,34 @@
 package com.boothj5.hedgehog;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.*;
 
 public abstract class Command<T> {
+    private static final Map<String, ExecutorService> executors = new HashMap<>();
+
     private final Settings settings;
 
     public Command(Settings settings) {
         this.settings = settings;
+
+        if (!executors.containsKey(this.settings.name)) {
+            ExecutorService executor;
+
+            if (this.settings.poolSize == -1) {
+                log("Creating single thread pool");
+                executor = Executors.newSingleThreadExecutor();
+            } else {
+                log("Creating thread pool, size: " + this.settings.poolSize);
+                executor = Executors.newFixedThreadPool(this.settings.poolSize);
+            }
+
+            executors.put(this.settings.name, executor);
+        }
     }
 
     public Command() {
-        this.settings = new Settings(this.getClass().getSimpleName(), true, 1000L);
+        this.settings = new Settings(this.getClass().getSimpleName(), true, 1000L, -1);
     }
 
     protected abstract T run() throws Exception;
@@ -21,7 +39,10 @@ public abstract class Command<T> {
 
     public final T execute() {
         log("execute()");
-        ExecutorService executor = Executors.newSingleThreadExecutor();
+        ExecutorService executor = executors.get(settings.name);
+        if (settings.poolSize != -1) {
+            log("Pool size: " + ((ThreadPoolExecutor) executor).getPoolSize() + ", active: " + ((ThreadPoolExecutor) executor).getPoolSize());
+        }
 
         Future<T> future = executor.submit(new Callable<T>() {
             @Override
@@ -42,6 +63,24 @@ public abstract class Command<T> {
                 log("fallback disabled");
                 throw new HegdehogRuntimeException(e);
             }
+        }
+    }
+
+    public int getPoolSize() {
+        if (settings.poolSize != -1) {
+            ThreadPoolExecutor executorService = (ThreadPoolExecutor) executors.get(settings.name);
+            return executorService.getPoolSize();
+        } else {
+            return 0;
+        }
+    }
+
+    public int getActiveThreads() {
+        if (settings.poolSize != -1) {
+            ThreadPoolExecutor executorService = (ThreadPoolExecutor) executors.get(settings.name);
+            return executorService.getActiveCount();
+        } else {
+            return 0;
         }
     }
 

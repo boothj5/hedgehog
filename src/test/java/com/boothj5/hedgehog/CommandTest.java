@@ -13,6 +13,7 @@ public class CommandTest {
         Settings settings = new SettingsBuilder()
                 .withName("SUCCESS")
                 .build();
+
         Command<String> command = new Command<String>(settings) {
             @Override
             public String run() {
@@ -29,6 +30,7 @@ public class CommandTest {
         Settings settings = new SettingsBuilder()
                 .withName("FALLBACK-ENABLED")
                 .build();
+
         Command<String> command = new Command<String>(settings) {
             @Override
             public String run() {
@@ -50,6 +52,7 @@ public class CommandTest {
                 .withName("FALLBACK-DISABLED")
                 .disableFallback()
                 .build();
+
         Command<String> command = new Command<String>(settings) {
             @Override
             public String run() {
@@ -75,6 +78,7 @@ public class CommandTest {
                 .withName("TIMEOUT")
                 .withTimeoutMillis(10)
                 .build();
+
         Command<String> command = new Command<String>(settings) {
             @Override
             public String run() throws InterruptedException {
@@ -89,5 +93,84 @@ public class CommandTest {
 
         String result = command.execute();
         assertEquals("fail", result);
+    }
+
+    @Test
+    public void poolDefault() throws InterruptedException {
+        Settings settings = new SettingsBuilder()
+                .withName("POOLDEFAULT")
+                .build();
+
+        final Command<String> command = new Command<String>(settings) {
+            @Override
+            protected String run() throws Exception {
+                Thread.sleep(200);
+                return "done";
+            }
+        };
+
+        int poolSize = command.getPoolSize();
+        int activeThreads = command.getActiveThreads();
+        assertEquals(0, poolSize);
+        assertEquals(0, activeThreads);
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                command.execute();
+            }
+        }).start();
+
+        Thread.sleep(50);
+
+        poolSize = command.getPoolSize();
+        activeThreads = command.getActiveThreads();
+        assertEquals(0, poolSize);
+        assertEquals(0, activeThreads);
+
+        Thread.sleep(200);
+
+        poolSize = command.getPoolSize();
+        activeThreads = command.getActiveThreads();
+        assertEquals(0, poolSize);
+        assertEquals(0, activeThreads);
+    }
+
+    @Test
+    public void poolDebugMax() throws InterruptedException {
+        Settings settings = new SettingsBuilder()
+                .withName("SLEEPER")
+                .withThreadPool(5)
+                .build();
+
+        final Command<String> command = new Command<String>(settings) {
+            @Override
+            protected String run() throws Exception {
+                Thread.sleep(1000);
+                return "done";
+            }
+        };
+
+        int poolSize = command.getPoolSize();
+        int activeThreads = command.getActiveThreads();
+        assertEquals(0, poolSize);
+        assertEquals(0, activeThreads);
+
+        for (int runs = 0; runs < 10; runs++) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    command.execute();
+                }
+            }).start();
+            Thread.sleep(20);
+        }
+
+        Thread.sleep(50);
+
+        poolSize = command.getPoolSize();
+        activeThreads = command.getActiveThreads();
+        assertEquals(5, poolSize);
+        assertEquals(5, activeThreads);
     }
 }
