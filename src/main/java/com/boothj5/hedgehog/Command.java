@@ -16,7 +16,7 @@ public abstract class Command<T> {
             ExecutorService executor;
 
             if (this.settings.poolSize == -1) {
-                log("Creating single thread pool");
+                log("Single thread execution");
                 executor = Executors.newSingleThreadExecutor();
             } else {
                 log("Creating thread pool, size: " + this.settings.poolSize);
