@@ -1,20 +1,32 @@
 package com.boothj5.hedgehog;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static junit.framework.TestCase.assertEquals;
-import static junit.framework.TestCase.fail;
-import static org.junit.Assert.assertTrue;
 
 public class CommandTest {
 
+    private AtomicInteger executionCounter = new AtomicInteger(0);
+
+    @Before
+    public void setup() {
+        executionCounter.set(0);
+    }
+
+    @After
+    public void tearDown() {
+        executionCounter.set(0);
+    }
+
     @Test
     public void executeReturnsRunResult() {
-        Settings settings = new SettingsBuilder()
-                .withName("SUCCESS")
-                .build();
-
-        Command<String> command = new Command<String>(settings) {
+        Command<String> command = new Command<String>() {
             @Override
             public String run() {
                 return "hello";
@@ -27,11 +39,7 @@ public class CommandTest {
 
     @Test
     public void executeReturnsFallbackResultOnException() {
-        Settings settings = new SettingsBuilder()
-                .withName("FALLBACK-ENABLED")
-                .build();
-
-        Command<String> command = new Command<String>(settings) {
+        Command<String> command = new Command<String>() {
             @Override
             public String run() {
                 throw new RuntimeException();
@@ -46,11 +54,40 @@ public class CommandTest {
         assertEquals("fail", result);
     }
 
-    @Test
+    @Test(expected = HegdehogRuntimeException.class)
+    public void duplicateKeyThrowsException() {
+        Settings settings = new SettingsBuilder()
+                .withName("DUPLICATE")
+                .build();
+
+        new Command<String>(settings) {
+            @Override
+            public String run() {
+                return "pass";
+            }
+            @Override
+            public String fallback() {
+                return "fail";
+            }
+        };
+
+        new Command<String>(settings) {
+            @Override
+            public String run() {
+                return "pass";
+            }
+            @Override
+            public String fallback() {
+                return "fail";
+            }
+        };
+    }
+
+    @Test(expected = HegdehogRuntimeException.class)
     public void fallbackDisabled() {
         Settings settings = new SettingsBuilder()
                 .withName("FALLBACK-DISABLED")
-                .disableFallback()
+                .withFallbackDisabled()
                 .build();
 
         Command<String> command = new Command<String>(settings) {
@@ -64,12 +101,7 @@ public class CommandTest {
             }
         };
 
-        try {
-            command.execute();
-            fail("Expected HedgehogRuntimeException");
-        } catch (Exception e) {
-            assertTrue(e instanceof HegdehogRuntimeException);
-        }
+        command.execute();
     }
 
     @Test
@@ -96,7 +128,7 @@ public class CommandTest {
     }
 
     @Test
-    public void poolDefault() throws InterruptedException {
+    public void poolDefaultIsOne() throws InterruptedException {
         Settings settings = new SettingsBuilder()
                 .withName("POOLDEFAULT")
                 .build();
@@ -109,41 +141,79 @@ public class CommandTest {
             }
         };
 
-        int poolSize = command.getPoolSize();
-        int activeThreads = command.getActiveThreads();
-        assertEquals(0, poolSize);
-        assertEquals(0, activeThreads);
+        assertEquals(0, command.getPoolSize());
+        assertEquals(0, command.getActiveThreads());
 
-        new Thread(new Runnable() {
+        Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
                 command.execute();
             }
-        }).start();
+        });
+        t.start();
 
         Thread.sleep(50);
 
-        poolSize = command.getPoolSize();
-        activeThreads = command.getActiveThreads();
-        assertEquals(0, poolSize);
-        assertEquals(0, activeThreads);
+        assertEquals(1, command.getPoolSize());
+        assertEquals(1, command.getActiveThreads());
 
-        Thread.sleep(200);
+        t.join();
 
-        poolSize = command.getPoolSize();
-        activeThreads = command.getActiveThreads();
-        assertEquals(0, poolSize);
-        assertEquals(0, activeThreads);
+        assertEquals(1, command.getPoolSize());
+        assertEquals(0, command.getActiveThreads());
+    }
+
+    @Test
+    public void poolDefaultMakesSecondThreadWait() throws InterruptedException {
+        executionCounter.set(0);
+
+        final Command<String> command = new Command<String>(new SettingsBuilder()
+                .withName("POOLDEFAULTWAIT")
+                .build()) {
+            @Override
+            protected String run() throws Exception {
+                executionCounter.incrementAndGet();
+                Thread.sleep(200);
+                return "done";
+            }
+        };
+
+        Thread t1 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                command.execute();
+            }
+        });
+        t1.start();
+
+        Thread.sleep(50);
+
+        Thread t2 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                command.execute();
+            }
+        });
+        t2.start();
+
+        Thread.sleep(50);
+
+        assertEquals(1, executionCounter.get());
+
+        t1.join();
+        t2.join();
+
+        assertEquals(2, executionCounter.get());
     }
 
     @Test
     public void poolDebugMax() throws InterruptedException {
-        Settings settings = new SettingsBuilder()
+
+        final Command<String> command = new Command<String>(new SettingsBuilder()
                 .withName("SLEEPER")
                 .withThreadPool(5)
-                .build();
-
-        final Command<String> command = new Command<String>(settings) {
+                .withTimeoutMillis(10000)
+                .build()) {
             @Override
             protected String run() throws Exception {
                 Thread.sleep(1000);
@@ -151,26 +221,67 @@ public class CommandTest {
             }
         };
 
-        int poolSize = command.getPoolSize();
-        int activeThreads = command.getActiveThreads();
-        assertEquals(0, poolSize);
-        assertEquals(0, activeThreads);
+        assertEquals(0, command.getPoolSize());
+        assertEquals(0, command.getActiveThreads());
+
+        List<Thread> threads = new ArrayList<>();
 
         for (int runs = 0; runs < 10; runs++) {
-            new Thread(new Runnable() {
+            threads.add(new Thread(new Runnable() {
                 @Override
                 public void run() {
                     command.execute();
                 }
-            }).start();
+            }));
+            threads.get(runs).start();
             Thread.sleep(20);
         }
 
         Thread.sleep(50);
 
-        poolSize = command.getPoolSize();
-        activeThreads = command.getActiveThreads();
-        assertEquals(5, poolSize);
-        assertEquals(5, activeThreads);
+        assertEquals(5, command.getPoolSize());
+        assertEquals(5, command.getActiveThreads());
+
+        for (int runs = 0; runs < 10; runs++) {
+            threads.get(runs).join();
+        }
+
+        assertEquals(5, command.getPoolSize());
+        assertEquals(0, command.getActiveThreads());
+    }
+
+    @Test(expected = HegdehogRuntimeException.class)
+    public void throwsRuntimeExceptionWhenQueueFull() throws InterruptedException {
+        final Command<String> command = new Command<String>(new SettingsBuilder()
+                .withName("QUEUEREJECTION")
+                .withQueue(1)
+                .withFallbackDisabled()
+                .build()) {
+            @Override
+            protected String run() throws Exception {
+                Thread.sleep(100);
+                return "done";
+            }
+        };
+
+        Thread t1 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                command.execute();
+            }
+        });
+        Thread t2 = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                command.execute();
+            }
+        });
+
+        t1.start();
+        Thread.sleep(20);
+        t2.start();
+        Thread.sleep(20);
+
+        command.execute();
     }
 }
